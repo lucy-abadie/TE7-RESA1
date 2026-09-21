@@ -6,41 +6,80 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <poll.h>
 
 #include "common.h"
 
 void echo_client(int sockfd) {
+	struct pollfd fds[2];
+    fds[0].fd = STDIN_FILENO;
+    fds[0].events = POLLIN;
+	fds[0].revents = 0;
+    fds[1].fd = sockfd;
+    fds[1].events = POLLIN;
+	fds[1].revents = 0;
+
 	char buff[MSG_LEN];
-	int n;
+	fprintf(stdout, "Connected. Enter msg (/quit to quit) :\n");
+
 	while (1) {
-		// Cleaning memory
-		memset(buff, 0, MSG_LEN);
-		// Getting message from client
-		printf("Message: ");
-		n = 0;
-		while ((buff[n++] = getchar()) != '\n') {} // trailing '\n' will be sent
-		// Sending message (ECHO)
-		if (send(sockfd, buff, strlen(buff), 0) <= 0) {
-			break;
-		}
-		printf("Message sent!\n");
-		// Cleaning memory
-		memset(buff, 0, MSG_LEN);
-		// Receiving message
-		if (recv(sockfd, buff, MSG_LEN, 0) <= 0) {
-			break;
-		}
-		printf("Received: %s", buff);
+		int nb_active_fd = poll(fds, 2, -1);
+		if (nb_active_fd == -1) {
+            perror("poll()");
+            break;
+        }
+
+        // Keyboard
+        if (fds[0].revents & POLLIN) {
+			
+            memset(buff, 0, MSG_LEN);
+
+			int n = 0;
+			while ((buff[n++] = getchar()) != '\n') {} 
+			buff[n] = '\0';
+            
+            int msg_size = n;
+            
+            // msg size + msg
+            if (send_all(sockfd, &msg_size, sizeof(int)) == -1) {
+				break;
+			}
+            if (send_all(sockfd, buff, msg_size) == -1) {
+				break;
+			}
+
+            if (strncmp(buff, "/quit", 5) == 0) {
+                fprintf(stdout, "Closed connexion...\n");
+                break;
+            }
+        }
+
+        // Received data from server
+        if (fds[1].revents & POLLIN) {
+            int msg_size = 0;
+            //size
+            if (recv_all(sockfd, &msg_size, sizeof(int)) <= 0) {
+                fprintf(stdout, "\nDisconected server\n");
+                break;
+            }
+            
+            // msg
+            memset(buff, 0, MSG_LEN);
+            if (recv_all(sockfd, buff, msg_size) <= 0) break;
+            
+            printf("Received: %s", buff);
+			memset(buff, 0, MSG_LEN);
+        }
 	}
 }
 
-int handle_connect() {
+int handle_connect(const char* server_name, const char* server_port) {
 	struct addrinfo hints, *result, *rp;
 	int sfd;
 	memset(&hints, 0, sizeof(struct addrinfo));
-	hints.ai_family = AF_UNSPEC;
+	hints.ai_family = AF_INET;
 	hints.ai_socktype = SOCK_STREAM;
-	if (getaddrinfo(SERV_ADDR, SERV_PORT, &hints, &result) != 0) {
+	if (getaddrinfo(server_name, server_port, &hints, &result) != 0) {
 		perror("getaddrinfo()");
 		exit(EXIT_FAILURE);
 	}
@@ -62,9 +101,14 @@ int handle_connect() {
 	return sfd;
 }
 
-int main() {
+int main(int argc, char *argv[]) {
+	if(argc != 3){
+		fprintf(stdout,"./client <server_name> <server_port>");
+		exit(EXIT_FAILURE);
+	}
+
 	int sfd;
-	sfd = handle_connect();
+	sfd = handle_connect(argv[1], argv[2]);
 	echo_client(sfd);
 	close(sfd);
 	return EXIT_SUCCESS;
