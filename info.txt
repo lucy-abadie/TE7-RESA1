@@ -1,3 +1,3 @@
-Nom : 
-Prénom : 
-github_login : 
+Nom : Abadie & Ky
+Prénom : Lucy & Elise
+github_login : lucy-abadie
