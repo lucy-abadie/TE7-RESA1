@@ -11,22 +11,30 @@
 #include "common.h"
 
 #define FDS_SIZE 128
-#define IPv4_SIZE 16
+#define IP_SIZE INET6_ADDRSTRLEN
 
 struct client_info{
 	int fd;
-    char ip[IPv4_SIZE];
+    char ip[IP_SIZE];
     int port;
     struct client_info *next;
 };
 
 struct client_info *clients_head = NULL;
 
-void add_client(int fd, struct sockaddr_in *addr) {
+void add_client(int fd, struct sockaddr_storage *addr) {
     struct client_info *new_client = malloc(sizeof(struct client_info));
     new_client->fd = fd;
-	new_client->port = ntohs(addr->sin_port);
-    inet_ntop(AF_INET, &(addr->sin_addr), new_client->ip, IPv4_SIZE);
+    if (addr->ss_family == AF_INET) { //IPv4
+        struct sockaddr_in *s = (struct sockaddr_in *)addr;
+        new_client->port = ntohs(s->sin_port);
+        inet_ntop(AF_INET, &s->sin_addr, new_client->ip, IP_SIZE);
+    } 
+    else { //IPv6
+        struct sockaddr_in6 *s = (struct sockaddr_in6 *)addr;
+        new_client->port = ntohs(s->sin6_port);
+        inet_ntop(AF_INET6, &s->sin6_addr, new_client->ip, IP_SIZE);
+    }
     new_client->next = clients_head;
     clients_head = new_client;
     fprintf(stdout, "Connexion acepted : IP (%s) - Port (%d) (fd %d)\n", new_client->ip, new_client->port, fd);
@@ -52,36 +60,49 @@ void remove_client(int fd) {
 }
 
 int echo_server(int sockfd) {
-	char buff[MSG_LEN];
     int msg_size = 0;
     
-    // Size of msg
+    // size of msg
     if (recv_all(sockfd, &msg_size, sizeof(int)) <= 0){
 		return -1;
 	}
+
+    msg_size = ntohl(msg_size);
     
-    // Msg
-    memset(buff, 0, MSG_LEN);
-    if (recv_all(sockfd, buff, msg_size) <= 0){
+    // msg
+    char *msg = malloc(msg_size + 1);
+
+    if (msg == NULL) {
+        perror("malloc failed");
+        return -1;
+    }
+
+    if (recv_all(sockfd, msg, msg_size) <= 0){
+        free(msg);
 		return -1;
 	}
+
+    msg[msg_size] = '\0';
     
-    fprintf(stdout, "Received (from fd %i): %s\n", sockfd, buff);
+    fprintf(stdout, "Received (from fd %i): %s\n", sockfd, msg);
     
     //quit
-    if (strncmp(buff, "/quit", 5) == 0){
+    if (strcmp(msg, "/quit") == 0){
+        free(msg);
 		return -1;
 	}
 
     //send back to client (size + msg)
-    if (send_all(sockfd, &msg_size, sizeof(int)) == -1){
+    int net_size = htonl(msg_size);
+    if (send_all(sockfd, &net_size, sizeof(int)) == -1){
 		return -1;
 	}
-    if (send_all(sockfd, buff, msg_size) == -1){
+    if (send_all(sockfd, msg, msg_size) == -1){
 		return -1;
 	}
     
     fprintf(stdout, "Message sent (to fd %i)!\n", sockfd);
+    free(msg);
     return 0;
 }
 
@@ -89,7 +110,7 @@ int handle_bind(const char *port) {
 	struct addrinfo hints, *result, *rp;
 	int sfd;
 	memset(&hints, 0, sizeof(struct addrinfo));
-	hints.ai_family = AF_INET;
+	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
 	hints.ai_flags = AI_PASSIVE;
 	if (getaddrinfo(NULL, port, &hints, &result) != 0) {
@@ -99,11 +120,14 @@ int handle_bind(const char *port) {
 	for (rp = result; rp != NULL; rp = rp->ai_next) {
 		sfd = socket(rp->ai_family, rp->ai_socktype,
 		rp->ai_protocol);
-		int yes = 1;
-    	setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+		
 		if (sfd == -1) {
 			continue;
 		}
+
+        int yes = 1;
+    	setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+
 		if (bind(sfd, rp->ai_addr, rp->ai_addrlen) == 0) {
 			break;
 		}
@@ -141,7 +165,8 @@ int main(int argc, char *argv[]) {
     fprintf(stdout, "Server starting on port %s...\n", argv[1]);
 
     while (1) {
-        if (poll(fds, MAX_CLIENTS, -1) == -1) {
+        int nb_active_clients = poll(fds, MAX_CLIENTS, -1);
+        if (nb_active_clients == -1) {
             perror("poll()");
             break;
         }
@@ -153,15 +178,16 @@ int main(int argc, char *argv[]) {
 
             if (fds[i].fd == sfd) {
                 // New connexion
-                struct sockaddr_in cli;
+                struct sockaddr_storage cli;
                 socklen_t len = sizeof(cli);
                 int connfd = accept(sfd, (struct sockaddr*) &cli, &len);
+
                 if (connfd < 0) {
                     perror("accept()\n");
-                    continue;
+                    exit(EXIT_FAILURE);
                 }
                 
-                add_client(connfd, &cli);
+                add_client(connfd, &cli); //add to list
                 
                 for (int j = 1; j < MAX_CLIENTS; j++) {
                     if (fds[j].fd == -1) {

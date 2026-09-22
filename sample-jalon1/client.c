@@ -34,21 +34,25 @@ void echo_client(int sockfd) {
 			
             memset(buff, 0, MSG_LEN);
 
-			int n = 0;
-			while ((buff[n++] = getchar()) != '\n') {} 
-			buff[n] = '\0';
-            
-            int msg_size = n;
+			if (fgets(buff, sizeof(buff), stdin) == NULL){
+				break;
+			}
+
+            buff[strcspn(buff, "\n")] = '\0';
+            int msg_size = strlen(buff);
+
+			int net_size = htonl(msg_size);
             
             // msg size + msg
-            if (send_all(sockfd, &msg_size, sizeof(int)) == -1) {
+            if (send_all(sockfd, &net_size, sizeof(int)) == -1) {
 				break;
 			}
             if (send_all(sockfd, buff, msg_size) == -1) {
 				break;
 			}
 
-            if (strncmp(buff, "/quit", 5) == 0) {
+			//quit
+            if (strcmp(buff, "/quit") == 0) {
                 fprintf(stdout, "Closed connexion...\n");
                 break;
             }
@@ -62,13 +66,24 @@ void echo_client(int sockfd) {
                 fprintf(stdout, "\nDisconected server\n");
                 break;
             }
+
+			msg_size = ntohl(msg_size);
             
             // msg
-            memset(buff, 0, MSG_LEN);
-            if (recv_all(sockfd, buff, msg_size) <= 0) break;
+			char *msg = malloc(msg_size + 1);
+
+			if (msg == NULL) {
+				perror("malloc a échoué");
+				break;
+			}
+
+            if (recv_all(sockfd, msg, msg_size) <= 0){
+				free(msg);
+				break;
+			}
             
-            printf("Received: %s", buff);
-			memset(buff, 0, MSG_LEN);
+            printf("Received: %s\n", msg);
+			free(msg);
         }
 	}
 }
@@ -77,7 +92,7 @@ int handle_connect(const char* server_name, const char* server_port) {
 	struct addrinfo hints, *result, *rp;
 	int sfd;
 	memset(&hints, 0, sizeof(struct addrinfo));
-	hints.ai_family = AF_INET;
+	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
 	if (getaddrinfo(server_name, server_port, &hints, &result) != 0) {
 		perror("getaddrinfo()");
@@ -108,9 +123,11 @@ int main(int argc, char *argv[]) {
 	}
 
 	int sfd;
+
 	sfd = handle_connect(argv[1], argv[2]);
 	echo_client(sfd);
 	close(sfd);
+
 	return EXIT_SUCCESS;
 }
 
