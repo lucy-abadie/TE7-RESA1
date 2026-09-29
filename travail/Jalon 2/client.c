@@ -11,32 +11,46 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <netdb.h>
 
 #define MAX_MESSAGE_SIZE 4096
 
 int setup_connection(const char *server_ip, const char *server_port) {
 	int socket_fd;
-	int result;
-	struct sockaddr_in server_address;
+	struct addrinfo hints, *res, *p;
 
-	printf("Using server IPv4 address %s.\n", server_ip);
-	memset(&server_address, 0, sizeof(server_address));
-	server_address.sin_family = AF_INET;
-	result = inet_aton(server_ip, &server_address.sin_addr);
-	if (result == 0) {
-		fprintf(stderr, "Invalid IPv4 address: %s\n", server_ip);
-		return -1;
-	}
+	memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC; //IPv4 ou IPv6
+    hints.ai_socktype = SOCK_STREAM;
 
-	socket_fd = socket(AF_INET, SOCK_STREAM, 0);
-	die(socket_fd, "socket");
-	printf("TCP socket created.\n");
+	if (getaddrinfo(server_ip, server_port, &hints, &res) != 0) {
+        fprintf(stderr, "Invalid address or port: %s:%s\n", server_ip, server_port);
+        return -1;
+    }
 
-	server_address.sin_port = htons((unsigned short)atoi(server_port));
-	result = connect(socket_fd, (struct sockaddr *)&server_address, sizeof(server_address));
-	die(result, "connect");
-	printf("Connected to %s:%s.\n", inet_ntoa(server_address.sin_addr), server_port);
-	return socket_fd;
+	for (p = res; p != NULL; p = p->ai_next) {
+        socket_fd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+        if (socket_fd < 0) {
+            continue;
+        }
+
+        if (connect(socket_fd, p->ai_addr, p->ai_addrlen) == 0) {
+            break; // Connexion réussie
+        }
+
+        close(socket_fd);
+        socket_fd = -1;
+    }
+
+    if (p == NULL) {
+        fprintf(stderr, "Failed to connect to %s:%s.\n", server_ip, server_port);
+        freeaddrinfo(res);
+        return -1;
+    }
+
+    printf("Connected to %s on port %s.\n", server_ip, server_port);
+    freeaddrinfo(res);
+    return socket_fd;
 }
 
 char current_nick[NICK_LEN] = "";
@@ -138,7 +152,7 @@ int main(int argc, char **argv) {
 	int socket_fd;
 
 	if (argc != 3) {
-		fprintf(stderr, "Usage: ./client <server_ipv4> <server_port>\n");
+		fprintf(stderr, "Usage: ./client <server_ip> <server_port>\n");
 		return EXIT_FAILURE;
 	}
 	socket_fd = setup_connection(argv[1], argv[2]);

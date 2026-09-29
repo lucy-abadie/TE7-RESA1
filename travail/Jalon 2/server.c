@@ -20,16 +20,16 @@
 int setup_listening_socket(int port) {
 	int listen_fd;
 	int result;
-	struct sockaddr_in server_address;
+	struct sockaddr_in6 server_address; //Pour accepter IPv4 & IPv6
 
-	listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+	listen_fd = socket(AF_INET6, SOCK_STREAM, 0);
 	die(listen_fd, "socket");
 	printf("TCP listening socket created.\n");
 
 	memset(&server_address, 0, sizeof(server_address));
-	server_address.sin_family = AF_INET;
-	server_address.sin_addr.s_addr = htonl(INADDR_ANY); // To listen on all interfaces --- Equivalent to 0.0.0.0
-	server_address.sin_port = htons((unsigned short)port);
+	server_address.sin6_family = AF_INET6;
+	server_address.sin6_addr = in6addr_any; // To listen on all interfaces --- Equivalent to 0.0.0.0
+	server_address.sin6_port = htons((unsigned short)port);
 	result = bind(listen_fd, (struct sockaddr *)&server_address, sizeof(server_address));
 	die(result, "bind");
 	printf("Socket bound to port %d.\n", port);
@@ -64,18 +64,34 @@ void server_poll_loop(int listen_fd, struct pollfd poll_fds[MAX_CLIENTS],
 
 		//Accept client
 		if ((poll_fds[0].revents & POLLIN) != 0) {
-			struct sockaddr_in client_addr;
+			struct sockaddr_storage client_addr; //accepte tout type d'adresse
             socklen_t len = sizeof(client_addr);
             int client_fd = accept(listen_fd, (struct sockaddr *)&client_addr, &len);
             
             for (int slot = 1; slot < MAX_CLIENTS; slot++) {
                 if (poll_fds[slot].fd < 0) {
-                    user_list_add(srv->users, client_fd, &client_addr);
+                    user_list_add(srv->users, client_fd, (struct sockaddr *)&client_addr);
                     poll_fds[slot].fd = client_fd;
                     poll_fds[slot].events = POLLIN;
 					poll_fds[slot].revents = 0;
-					printf("Nouvelle connexion acceptée depuis %s:%d (assignée au slot %d)\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port), slot);
-                    break;
+
+                    //selon type adresse
+                    char ip_str[INET6_ADDRSTRLEN];
+					int client_port;
+
+					if (client_addr.ss_family == AF_INET) { //IPv4
+						struct sockaddr_in *s = (struct sockaddr_in *)&client_addr;
+						inet_ntop(AF_INET, &s->sin_addr, ip_str, sizeof(ip_str));
+						client_port = ntohs(s->sin_port);
+					} else { //IPv6
+						struct sockaddr_in6 *s = (struct sockaddr_in6 *)&client_addr;
+						inet_ntop(AF_INET6, &s->sin6_addr, ip_str, sizeof(ip_str));
+						client_port = ntohs(s->sin6_port);
+					}
+
+					printf("New connection accepted from %s:%d (slot %d)\n", ip_str, client_port, slot);
+					break;
+
                 }
             }
 		}

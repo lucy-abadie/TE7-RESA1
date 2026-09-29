@@ -10,7 +10,7 @@ void user_list_init(struct user_list *users) {
     users->head = NULL;
 }
 
-int user_list_add(struct user_list *users, int socket_fd, struct sockaddr_in *addr) {
+int user_list_add(struct user_list *users, int socket_fd, struct sockaddr *addr) {
     if (users == NULL || addr == NULL) {
         return -1;
     }
@@ -20,10 +20,18 @@ int user_list_add(struct user_list *users, int socket_fd, struct sockaddr_in *ad
         return -1;
     }
 
-    // Remplissage des champs
     new_user->socket_fd = socket_fd;
-    inet_ntop(AF_INET, &(addr->sin_addr), new_user->ip, INET_ADDRSTRLEN);
-    new_user->port = ntohs(addr->sin_port);
+
+    if (addr->sa_family == AF_INET) {//IPv4
+        struct sockaddr_in *s4 = (struct sockaddr_in *)addr;
+        inet_ntop(AF_INET, &(s4->sin_addr), new_user->ip, INET6_ADDRSTRLEN);
+        new_user->port = ntohs(s4->sin_port);
+    } 
+    else if (addr->sa_family == AF_INET6) {//IPv6
+        struct sockaddr_in6 *s6 = (struct sockaddr_in6 *)addr;
+        inet_ntop(AF_INET6, &(s6->sin6_addr), new_user->ip, INET6_ADDRSTRLEN);
+        new_user->port = ntohs(s6->sin6_port);
+    }
     
     time_t now = time(NULL);
     struct tm *t = localtime(&now);
